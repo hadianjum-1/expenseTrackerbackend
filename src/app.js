@@ -14,11 +14,15 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 
 dotenv.config();
-connectDb();
 
 const app = express();
 const port = process.env.PORT || 3000;
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "http://localhost:5173";
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:5174",
+  CLIENT_ORIGIN
+];
 
 // Security
 app.use(helmet());
@@ -34,7 +38,13 @@ app.use(limiter);
 // CORS
 app.use(
   cors({
-    origin: CLIENT_ORIGIN,
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin) || origin.startsWith("http://localhost:")) {
+        callback(null, true);
+      } else {
+        callback(new Error("Not allowed by CORS"));
+      }
+    },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   })
@@ -70,6 +80,17 @@ app.use((err, req, res, next) => {
   res.status(500).json({ message: "Internal server error" });
 });
 
-app.listen(port, () => {
-  console.log(`✅ Server running at http://localhost:${port}`);
-});
+// Start server only after DB connects successfully
+const startServer = async () => {
+  try {
+    await connectDb();
+    app.listen(port, () => {
+      console.log(`✅ Server running at http://localhost:${port}`);
+    });
+  } catch (err) {
+    console.error("Failed to connect to database. Exiting.");
+    process.exit(1);
+  }
+};
+
+startServer();

@@ -6,26 +6,39 @@ import jwt from "jsonwebtoken";
 
 export const Creatuser = async (req, res) => {
   try {
-    const data = req.body;
+    const data = req.body || {};
+
+    console.log('Signup request body:', data);
+
+    const { Name, Email, Phone, password } = data;
+    if (!Name || !Email || !Phone || !password) {
+      return res.status(400).json({ message: "Missing required fields" });
+    }
+
+    // Prevent duplicate users
+    const existing = await Usermodel.findOne({ Email });
+    if (existing) {
+      return res.status(409).json({ message: "Email already registered" });
+    }
 
     const otp = Otpgenerator();
 
     const user = new Usermodel({
       ...data,
-      otp,
+      otp: String(otp),
     });
 
     await user.save();
+    console.log(`[DEBUG] Registration OTP for ${user.Email}: ${otp}`);
 
-    await Sendemail(
-      user.Email,
-      "OTP Verification",
-      otptemp(otp)
-    );
+    try {
+      await Sendemail(user.Email, "OTP Verification", otptemp(otp));
+    } catch (mailErr) {
+      console.error("Failed to send OTP email:", mailErr);
+      // don't fail the request if email fails; user record is created
+    }
 
-    res.json({
-      message: "OTP sent successfully",
-    });
+    res.json({ message: "OTP sent successfully" });
     
   } catch (err) {
     res.status(500).json({
@@ -78,10 +91,7 @@ export const VerifyOtp = async (req, res) => {
 
     console.log("OTP RECEIVED:", otp);
 
-    // OTP generated/stored as a number; coerce incoming otp to number for matching
-    const otpNumber = Number(otp);
-
-    const user = await Usermodel.findOne({ otp: otpNumber, Email });
+    const user = await Usermodel.findOne({ otp: String(otp), Email });
 
     console.log("USER FOUND:", user);
 
@@ -121,6 +131,7 @@ export const Forgotpassword = async (req,res)=>{
   const otp = Otpgenerator();
   user.otp = otp;
   await user.save();
+  console.log(`[DEBUG] Forgot Password OTP for ${user.Email}: ${otp}`);
 
   await Sendemail(
     user.Email,
@@ -135,8 +146,7 @@ export const Forgotpassword = async (req,res)=>{
 
 export const VerifyResetOtp = async (req, res) => {
   const { Email, otp } = req.body;
-
-  const user = await Usermodel.findOne({ Email, otp });
+  const user = await Usermodel.findOne({ Email, otp: String(otp) });
 
   if (!user) {
     return res.status(400).json({
