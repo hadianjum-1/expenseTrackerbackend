@@ -1,0 +1,310 @@
+import { Sendemail } from "./emailer.js";
+import { Otpgenerator } from "./otgenrte.js";
+import { otptemp } from "./otp.template.js";
+import Usermodel from "./user.model.js";
+import jwt from "jsonwebtoken";
+
+export const Creatuser = async (req, res) => {
+  try {
+    const data = req.body;
+
+    const otp = Otpgenerator();
+
+    const user = new Usermodel({
+      ...data,
+      otp,
+    });
+
+    await user.save();
+
+    await Sendemail(
+      user.Email,
+      "OTP Verification",
+      otptemp(otp)
+    );
+
+    res.json({
+      message: "OTP sent successfully",
+    });
+    
+  } catch (err) {
+    res.status(500).json({
+      message: err.message,
+    });
+  }
+};
+
+// create token
+const Createtoken = async (user) => {
+  const payload = {
+  id: user._id,
+  email: user.Email,
+  name: user.Name,
+  role: user.Role,
+  Status: user.Status,
+};
+  // Token
+  const token = await jwt.sign(payload, process.env.SECRET_KEY, {
+    expiresIn: "1d",
+  });
+  return token;
+};
+
+export const sendEmail = async(req,res)=>{
+   try{
+    const {Email} = req.body;
+
+    await Sendemail(
+      Email,
+      'otp',
+      otptemp()
+    );
+
+    res.json({
+      message : "Email Deliverd"
+    });
+  }
+  catch(err){
+    console.error(err);
+    
+  }
+}
+
+export const VerifyOtp = async (req, res) => {
+  try {
+    console.log("REQ BODY:", req.body);
+
+    const { otp , Email} = req.body;
+
+    console.log("OTP RECEIVED:", otp);
+
+    // OTP generated/stored as a number; coerce incoming otp to number for matching
+    const otpNumber = Number(otp);
+
+    const user = await Usermodel.findOne({ otp: otpNumber, Email });
+
+    console.log("USER FOUND:", user);
+
+    if (!user) {
+      return res.status(400).json({
+        message: "Invalid OTP",
+      });
+    }
+
+    user.isVerified = true;
+    user.otp = null;
+
+    await user.save();
+
+    res.json({
+      message: "Account verified successfully",
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: err.message,
+    });
+  }
+};
+
+export const Forgotpassword = async (req,res)=>{
+  const {Email} = req.body;
+
+  const user = await Usermodel.findOne({Email});
+
+  if(!user){
+    return res.status(404).json({
+      message: "User not found",
+    });
+  }
+
+  const otp = Otpgenerator();
+  user.otp = otp;
+  await user.save();
+
+  await Sendemail(
+    user.Email,
+    "Password Reset OTP",
+    otptemp(otp)
+  );
+
+  res.json({
+    message: "Reset OTP sent to your email",
+  });
+}
+
+export const VerifyResetOtp = async (req, res) => {
+  const { Email, otp } = req.body;
+
+  const user = await Usermodel.findOne({ Email, otp });
+
+  if (!user) {
+    return res.status(400).json({
+      message: "Invalid OTP",
+    });
+  }
+
+  res.json({
+    message: "OTP Verified",
+  });
+};
+
+export const ResetPassword = async (req, res) => {
+  try {
+    const { Email, password } = req.body;
+
+    const user = await Usermodel.findOne({ Email });
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    user.password = password;
+    user.otp = null;
+
+    await user.save();
+
+    res.json({ message: "Password updated successfully" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: err.message });
+  }
+};
+export const Login = async (req, res) => {
+  try {
+    console.log("BODY:", req.body);
+
+    const { Email, password } = req.body;
+
+    const user = await Usermodel.findOne({ Email });
+
+    console.log("USER:", user);
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+      });
+    }
+
+    const isMatch = await user.comparePassword(password);
+
+    console.log("MATCH:", isMatch);
+
+    if (!isMatch) {
+      return res.status(401).json({
+        message: "Invalid password",
+      });
+    }
+
+    const token = await Createtoken(user);
+
+    // cookie options must be symmetric for set/clear and compatible with cross-site
+    const isDev = process.env.ENVIROMENT === "DEV" || process.env.NODE_ENV === 'development';
+    const cookieOptions = {
+      maxAge: 24 * 60 * 60 * 1000,
+      httpOnly: true,
+      secure: !isDev,
+      sameSite: isDev ? 'lax' : 'none',
+      path: '/',
+    };
+
+    // only set domain in production if explicitly configured
+    if (!isDev && process.env.DOMAIN) cookieOptions.domain = process.env.DOMAIN;
+
+    res.cookie('Authcontrol', token, cookieOptions);
+
+    res.json({
+      message: 'Login successful',
+      role: user.Role,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: err.message,
+    });
+  }
+};
+const invalid =  async (res)=>{
+  const isDev = process.env.ENVIROMENT === "DEV" || process.env.NODE_ENV === 'development';
+  const cookieOptions = {
+    httpOnly: true,
+    secure: !isDev,
+    sameSite: isDev ? 'lax' : 'none',
+    path: '/',
+  };
+  if (!isDev && process.env.DOMAIN) cookieOptions.domain = process.env.DOMAIN;
+
+  res.clearCookie('Authcontrol', cookieOptions);
+}
+export const AdminGuard = async (req,res,next)=>{
+  try {
+    const token = req.cookies.Authcontrol;
+
+    if (!token) {
+      return invalid(res);
+    }
+
+    const payload = jwt.verify(
+      token,
+      process.env.SECRET_KEY
+    );
+
+    req.user = payload;
+
+    next();
+  } catch (err) {
+    return invalid(res);
+  }
+}
+// user.controller.js
+
+export const CheckAuth = async (req, res) => {
+  // prevent caching of auth result
+  res.set({
+    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+    Pragma: 'no-cache',
+    Expires: '0',
+    'Surrogate-Control': 'no-store',
+  });
+
+  try {
+    const token = req.cookies && req.cookies.Authcontrol;
+    if (!token) {
+      return res.status(200).json({ authenticated: false });
+    }
+
+    const payload = jwt.verify(token, process.env.SECRET_KEY);
+
+    return res.status(200).json({ authenticated: true, user: payload });
+  } catch (err) {
+    return res.status(200).json({ authenticated: false });
+  }
+};
+export const Logout = async (req, res) => {
+  const isDev = process.env.ENVIROMENT === "DEV" || process.env.NODE_ENV === 'development';
+  const cookieOptions = {
+    httpOnly: true,
+    secure: !isDev,
+    sameSite: isDev ? 'lax' : 'none',
+    path: '/',
+  };
+  if (!isDev && process.env.DOMAIN) cookieOptions.domain = process.env.DOMAIN;
+
+  res.clearCookie('Authcontrol', cookieOptions);
+  res.set({
+    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+    Pragma: 'no-cache',
+    Expires: '0',
+  });
+
+  return res.status(200).json({ success: true, message: 'Logged out' });
+};
+export const test = async (req, res) => {
+  try {
+    const data = req.body;
+    console.log(data);
+    res.send("hi iam test");
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
