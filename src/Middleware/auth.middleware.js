@@ -1,21 +1,21 @@
 import jwt from "jsonwebtoken";
 
-const isDev = process.env.ENVIROMENT === "DEV" || process.env.NODE_ENV === "development";
-
-const clearAuthCookie = (res) => {
-  res.clearCookie("Authcontrol", {
+const getCookieOptions = (req) => {
+  const origin = req.headers.origin || "";
+  const isSecureContext = origin.startsWith("https://") || req.secure || req.headers["x-forwarded-proto"] === "https";
+  return {
     httpOnly: true,
-    secure: !isDev,
-    sameSite: isDev ? "lax" : "none",
+    secure: !!isSecureContext,
+    sameSite: isSecureContext ? "none" : "lax",
     path: "/",
-  });
+  };
 };
 
 const authMiddleware = async (req, res, next) => {
   try {
     const token = req.cookies?.Authcontrol;
     if (!token) {
-      clearAuthCookie(res);
+      res.clearCookie("Authcontrol", getCookieOptions(req));
       return res.status(401).json({ message: "Unauthorized. Please log in." });
     }
 
@@ -23,7 +23,7 @@ const authMiddleware = async (req, res, next) => {
     req.user = payload;
     next();
   } catch (err) {
-    clearAuthCookie(res);
+    res.clearCookie("Authcontrol", getCookieOptions(req));
     return res.status(401).json({ message: "Session expired. Please log in again." });
   }
 };

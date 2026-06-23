@@ -66,20 +66,21 @@ const Createtoken = async (user) => {
 export const sendEmail = async(req,res)=>{
    try{
     const {Email} = req.body;
+    const otp = Otpgenerator();
 
     await Sendemail(
       Email,
-      'otp',
-      otptemp()
+      'OTP Verification',
+      otptemp(otp)
     );
 
     res.json({
-      message : "Email Deliverd"
+      message : "Email Delivered"
     });
   }
   catch(err){
     console.error(err);
-    
+    res.status(500).json({ message: err.message });
   }
 }
 
@@ -208,20 +209,25 @@ export const Login = async (req, res) => {
 
     const token = await Createtoken(user);
 
-    // cookie options must be symmetric for set/clear and compatible with cross-site
-    const isDev = process.env.ENVIROMENT === "DEV" || process.env.NODE_ENV === 'development';
-    const cookieOptions = {
-      maxAge: 24 * 60 * 60 * 1000,
-      httpOnly: true,
-      secure: !isDev,
-      sameSite: isDev ? 'lax' : 'none',
-      path: '/',
+    const getCookieOptions = (req) => {
+      const origin = req.headers.origin || "";
+      const isSecureContext = origin.startsWith("https://") || req.secure || req.headers["x-forwarded-proto"] === "https";
+      
+      const options = {
+        maxAge: 24 * 60 * 60 * 1000,
+        httpOnly: true,
+        secure: !!isSecureContext,
+        sameSite: isSecureContext ? 'none' : 'lax',
+        path: '/',
+      };
+      
+      if (isSecureContext && process.env.DOMAIN && !process.env.DOMAIN.includes("localhost")) {
+        options.domain = process.env.DOMAIN;
+      }
+      return options;
     };
 
-    // only set domain in production if explicitly configured
-    if (!isDev && process.env.DOMAIN) cookieOptions.domain = process.env.DOMAIN;
-
-    res.cookie('Authcontrol', token, cookieOptions);
+    res.cookie('Authcontrol', token, getCookieOptions(req));
 
     res.json({
       message: 'Login successful',
@@ -234,24 +240,35 @@ export const Login = async (req, res) => {
     });
   }
 };
-const invalid =  async (res)=>{
-  const isDev = process.env.ENVIROMENT === "DEV" || process.env.NODE_ENV === 'development';
-  const cookieOptions = {
+
+const getCookieOptions = (req) => {
+  const origin = req.headers.origin || "";
+  const isSecureContext = origin.startsWith("https://") || req.secure || req.headers["x-forwarded-proto"] === "https";
+  
+  const options = {
     httpOnly: true,
-    secure: !isDev,
-    sameSite: isDev ? 'lax' : 'none',
+    secure: !!isSecureContext,
+    sameSite: isSecureContext ? 'none' : 'lax',
     path: '/',
   };
-  if (!isDev && process.env.DOMAIN) cookieOptions.domain = process.env.DOMAIN;
+  
+  if (isSecureContext && process.env.DOMAIN && !process.env.DOMAIN.includes("localhost")) {
+    options.domain = process.env.DOMAIN;
+  }
+  return options;
+};
 
-  res.clearCookie('Authcontrol', cookieOptions);
+const invalid = async (req, res) => {
+  res.clearCookie('Authcontrol', getCookieOptions(req));
+  return res.status(401).json({ message: 'Unauthorized. Please log in.' });
 }
+
 export const AdminGuard = async (req,res,next)=>{
   try {
     const token = req.cookies.Authcontrol;
 
     if (!token) {
-      return invalid(res);
+      return invalid(req, res);
     }
 
     const payload = jwt.verify(
@@ -263,7 +280,7 @@ export const AdminGuard = async (req,res,next)=>{
 
     next();
   } catch (err) {
-    return invalid(res);
+    return invalid(req, res);
   }
 }
 // user.controller.js
@@ -290,17 +307,9 @@ export const CheckAuth = async (req, res) => {
     return res.status(200).json({ authenticated: false });
   }
 };
-export const Logout = async (req, res) => {
-  const isDev = process.env.ENVIROMENT === "DEV" || process.env.NODE_ENV === 'development';
-  const cookieOptions = {
-    httpOnly: true,
-    secure: !isDev,
-    sameSite: isDev ? 'lax' : 'none',
-    path: '/',
-  };
-  if (!isDev && process.env.DOMAIN) cookieOptions.domain = process.env.DOMAIN;
 
-  res.clearCookie('Authcontrol', cookieOptions);
+export const Logout = async (req, res) => {
+  res.clearCookie('Authcontrol', getCookieOptions(req));
   res.set({
     'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
     Pragma: 'no-cache',
