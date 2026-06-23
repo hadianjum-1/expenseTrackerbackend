@@ -21,7 +21,8 @@ const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "http://localhost:5173";
 const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:5174",
-  CLIENT_ORIGIN
+  CLIENT_ORIGIN,
+  "https://hadianjum-1.github.io"
 ];
 
 // Security
@@ -39,7 +40,11 @@ app.use(limiter);
 app.use(
   cors({
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin) || origin.startsWith("http://localhost:")) {
+      if (!origin ||
+        allowedOrigins.includes(origin) ||
+        origin.startsWith("http://localhost:") ||
+        origin.endsWith(".github.io")
+      ) {
         callback(null, true);
       } else {
         callback(new Error("Not allowed by CORS"));
